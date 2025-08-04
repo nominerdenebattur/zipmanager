@@ -1,0 +1,7 @@
+Django==2pt==1.4.6
+Pillow==6.2.1
+django-cors-headers==2.4.0
+django-widget-tweaks==1.4.3
+django-extra-fields==1.0.0
+djangorestframework==3.9.4
+matplotlib==3.3.4
