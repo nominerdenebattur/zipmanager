@@ -1,12 +1,15 @@
 from django.shortcuts import render, redirect
 from django.http import FileResponse, HttpResponse
 from django.conf import settings
+from django.utils import timezone
 from user_agents import parse
 import os
 import socket
 import io
 import base64
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from django.db import models
 from django.db.models import Count
@@ -15,12 +18,13 @@ from .models import ZipFile, DownloadedDevice
 from .forms import ZipFileForm
 from django.core.paginator import Paginator
 from django.shortcuts import render
+import subprocess
 
 #zip file upload hiih view
 def upload_zip(request):
     if request.method == 'POST':  # Хэрэв POST хүсэлт ирвэл
         form = ZipFileForm(request.POST, request.FILES)  # Form-д өгөгдлийг оноох
-        if form.is_valid():  # Form зөв бөглөгдсөн бол
+        if form.is_valid():# Form зөв бөглөгдсөн бол
             ZipFile.objects.update(is_download=False)  # Өмнөх файлуудыг татаж авахаа больсон болгож update хийх
             zip_instance = form.save(commit=False)  # DB рүү хадгалахгүйгээр instance үүсгэх
             zip_instance.name = request.FILES['file'].name  # Файлын нэр оноох
@@ -161,7 +165,7 @@ def downloaded_devices(request):
             parsed_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date()
 
             # Өдрийн эхлэл ба дараагийн өдрийн эхлэл
-            start_datetime = datetime.combine(parsed_date, datetime.min.time())
+            start_datetime = timezone.make_aware(datetime.combine(parsed_date, datetime.min.time()))
             end_datetime = start_datetime + timedelta(days=1)
 
             # Огноо, цагийн хүрээнд шүүх
@@ -205,8 +209,10 @@ def downloaded_devices(request):
             output.getvalue(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-        response['Content-Disposition'] = f'attachment; filename=download_stats_{parsed_date}.xlsx'
-        return response
+        file_path = r"C:\ebarimt\myfile.xlsx"
+
+        # Windows дээр тухайн файлыг нээх
+        subprocess.run(['explorer', file_path])
 
     # Upload / Download тоо
     upload_count = ZipFile.objects.filter(upload_date__date=parsed_date).count() if parsed_date else 0
