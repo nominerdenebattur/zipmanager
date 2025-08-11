@@ -143,14 +143,31 @@ def download_latest_zip(request):
     return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=zip_file.name)
 
 #tataj avsan tuhuurumjuudiin medeelliig haruulna
-def downloaded_devices(request):
-    from matplotlib.ticker import MultipleLocator
+from datetime import datetime, timedelta
 
+
+from datetime import datetime, timedelta
+from matplotlib.ticker import MultipleLocator
+
+def downloaded_devices(request):
     devices_list = DownloadedDevice.objects.select_related('zip_file').order_by('-download_date')
 
     # Огноо авах
-    selected_date = request.GET.get('selected_date', '')
-    parsed_date = parse_date(selected_date) if selected_date else None
+    selected_date_str = request.GET.get('selected_date', '').strip()
+    parsed_date = None
+    if selected_date_str:
+        try:
+            # selected_date-г datetime.date болгож хөрвүүлэх
+            parsed_date = datetime.strptime(selected_date_str, "%Y-%m-%d").date()
+
+            # Өдрийн эхлэл ба дараагийн өдрийн эхлэл
+            start_datetime = datetime.combine(parsed_date, datetime.min.time())
+            end_datetime = start_datetime + timedelta(days=1)
+
+            # Огноо, цагийн хүрээнд шүүх
+            devices_list = devices_list.filter(download_date__gte=start_datetime, download_date__lt=end_datetime)
+        except ValueError:
+            parsed_date = None
 
     # Эрэмбэ
     sort_by = request.GET.get('sort', 'download_date')
@@ -158,13 +175,8 @@ def downloaded_devices(request):
     sort_prefix = '-' if order == 'desc' else ''
     devices_list = devices_list.order_by(f"{sort_prefix}{sort_by}")
 
-    # Огноогоор шүүх
-    if parsed_date:
-        devices_list = devices_list.filter(download_date__date=parsed_date)
-
-    # Check for export request first
-    if 'export' in request.GET and parsed_date:
-        # Create a DataFrame with all data (not just paginated data)
+    # Excel export
+    if 'export' in request.GET:
         data = devices_list.values_list(
             'zip_file__name',
             'zip_file__version',
@@ -174,9 +186,7 @@ def downloaded_devices(request):
             'download_date',
             'success'
         )
-
         df = pd.DataFrame(data, columns=[
-            'No',
             'File Name',
             'Version',
             'Device Name',
@@ -185,12 +195,12 @@ def downloaded_devices(request):
             'Download Date',
             'Success'
         ])
+        if 'Download Date' in df.columns:
+            df['Download Date'] = pd.to_datetime(df['Download Date']).dt.tz_localize(None)
 
-        # Convert to Excel
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df.to_excel(writer, sheet_name='Downloaded Devices', index=False)
-
         response = HttpResponse(
             output.getvalue(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
@@ -198,7 +208,7 @@ def downloaded_devices(request):
         response['Content-Disposition'] = f'attachment; filename=download_stats_{parsed_date}.xlsx'
         return response
 
-    # Upload ба Download-ийн тоо
+    # Upload / Download тоо
     upload_count = ZipFile.objects.filter(upload_date__date=parsed_date).count() if parsed_date else 0
     download_counts = devices_list.aggregate(
         total_downloads=Count('id'),
@@ -206,52 +216,36 @@ def downloaded_devices(request):
         failure_count=Count('id', filter=models.Q(success=False)),
     ) if parsed_date else {'total_downloads': 0, 'success_count': 0, 'failure_count': 0}
 
-    # Bar chart
+    # График
     fig, ax = plt.subplots(figsize=(16, 3))
     categories = ['Uploads', 'Downloads Success', 'Downloads Failed']
     values = [upload_count, download_counts['success_count'], download_counts['failure_count']]
-
     bars = ax.bar(range(len(categories)), values, color=['blue', 'green', 'red'])
-
-    # X тэнхлэгийн тохиргоо
     ax.set_xticks(range(len(categories)))
     ax.set_xticklabels(categories)
-
-    # Y тэнхлэгийн динамик тохиргоо
     max_value = max(values) if values else 0
-    step = max(1, max_value // 5)  # хамгийн их утгыг 5 хувааж алхам сонгоно
+    step = max(1, max_value // 5)
     ax.set_ylim(0, max_value + step)
     ax.yaxis.set_major_locator(MultipleLocator(step))
-
     ax.set_ylabel("Count")
     ax.set_title(f"Uploads & Downloads on {parsed_date.strftime('%Y-%m-%d')}" if parsed_date else "No Date Selected")
-
-    # === Бар дээр утга гаргах  ===
     for bar in bars:
         height = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            height,
-            f'{int(height)}',
-            ha='center',
-            va='bottom'
-        )
-
-    # Графикийг base64 болгож template-д дамжуулах
+        ax.text(bar.get_x() + bar.get_width() / 2, height, f'{int(height)}', ha='center', va='bottom')
     img_buffer = io.BytesIO()
     plt.savefig(img_buffer, format="png", bbox_inches="tight")
     plt.close(fig)
     img_buffer.seek(0)
     chart_image = base64.b64encode(img_buffer.getvalue()).decode()
 
-    # Pagination
+    # Хуудаслалт
     paginator = Paginator(devices_list, 10)
     page_number = request.GET.get('page')
     devices = paginator.get_page(page_number)
 
     return render(request, 'zip_file/download_devices.html', {
         'devices': devices,
-        'selected_date': selected_date,
+        'selected_date': selected_date_str,
         'chart_image': chart_image if parsed_date else None,
         'sort': sort_by,
         'order': order
