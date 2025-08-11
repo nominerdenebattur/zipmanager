@@ -1,4 +1,4 @@
-Django==2pt==1.4.6
+Django==1.4.6
 Pillow==6.2.1
 django-cors-headers==2.4.0
 django-widget-tweaks==1.4.3
