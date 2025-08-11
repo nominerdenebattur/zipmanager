@@ -176,7 +176,7 @@ def downloaded_devices(request):
     devices_list = devices_list.order_by(f"{sort_prefix}{sort_by}")
 
     # Excel export
-    if 'export' in request.GET and parsed_date:
+    if 'export' in request.GET:
         data = devices_list.values_list(
             'zip_file__name',
             'zip_file__version',
@@ -195,6 +195,9 @@ def downloaded_devices(request):
             'Download Date',
             'Success'
         ])
+        if 'Download Date' in df.columns:
+            df['Download Date'] = pd.to_datetime(df['Download Date']).dt.tz_localize(None)
+
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
             df.to_excel(writer, sheet_name='Downloaded Devices', index=False)
