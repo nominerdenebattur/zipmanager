@@ -9,6 +9,9 @@ class ZipFile(models.Model):
     download_count = models.IntegerField(default=0)
     is_download = models.BooleanField(default=False)
 
+    class Meta:
+        unique_together = ('name', 'version')
+
     def __str__(self):
         return f"{self.name} - {self.version} (Downloadable: {self.is_download})"
 
