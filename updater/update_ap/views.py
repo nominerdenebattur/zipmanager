@@ -1,3 +1,5 @@
+import shutil
+
 from django.shortcuts import render, redirect
 from django.http import FileResponse, HttpResponse
 from django.conf import settings
@@ -85,65 +87,77 @@ def zip_list(request):
 
 #hamgiin suuld upload hiisen file-iig tataj avah
 def download_latest_zip(request):
+    # Сүүлд татах боломжтой ZipFile-ийг авна
     zip_file = ZipFile.objects.filter(is_download=True).order_by('-upload_date').first()
     if not zip_file:
         return HttpResponse("No files available for download.", status=404)
 
-    # Extract user details
+    # User Agent мэдээлэл задлах
     user_agent = request.META.get('HTTP_USER_AGENT', '')
     parsed_ua = parse(user_agent)
     os_info = f"{parsed_ua.os.family} {parsed_ua.os.version_string} - {parsed_ua.device.family}"
 
+    # Клиент IP-г авах
     client_ip = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR', '')).split(',')[0].strip()
 
-    # Attempt to resolve hostname
+    # IP-аас hostname хайх оролдлого
     device_name = None
     if client_ip and client_ip != "127.0.0.1":
         try:
-            device_name = socket.gethostbyaddr(client_ip)[0]  # Get hostname
+            device_name = socket.gethostbyaddr(client_ip)[0]
         except (socket.herror, socket.gaierror, socket.timeout):
-            device_name = None  # If hostname resolution fails, fallback to frontend input
+            device_name = None
 
-    # Get hostname from frontend if available
+    # Frontend-аас hostname ирсэн бол илүүд үзэх
     hostname_from_frontend = request.POST.get("hostname", "").strip()
     if hostname_from_frontend:
-        device_name = hostname_from_frontend  # Prefer frontend hostname if provided
+        device_name = hostname_from_frontend
 
-    # Fallback to IP address if hostname is still unknown
     if not device_name:
         device_name = client_ip
 
-    # Check if this file has already been downloaded successfully on this device
+    # Хэрэглэгч өмнө амжилттай татсан эсэхийг шалгах
     already_downloaded = DownloadedDevice.objects.filter(
         zip_file__name=zip_file.name,
         zip_file__version=zip_file.version,
         ip_address=client_ip,
         device_name=device_name,
-        success=True  # Block only if it was previously successful
+        success=True
     ).exists()
 
     if already_downloaded:
         return HttpResponse("This file has already been downloaded successfully on this device.", status=403)
 
+    # Файлын замыг тодорхойлох
     file_path = os.path.join(settings.MEDIA_ROOT, str(zip_file.file))
-    success = os.path.exists(file_path)
-
-    # Save the download record with hostname in device_name
-    DownloadedDevice.objects.create(
-        zip_file=zip_file,
-        device_name=device_name,  # Save the hostname
-        os_info=os_info,
-        ip_address=client_ip,
-        success=success
-    )
-
-    # If the file does not exist, return an error
-    if not success:
+    if not os.path.exists(file_path):
         return HttpResponse("File not found.", status=404)
 
+    # Хадгалах зориулалттай C:\ebarimt хавтсыг үүсгэх
+    target_dir = r"C:\ebarimt"
+    os.makedirs(target_dir, exist_ok=True)
+    target_path = os.path.join(target_dir, zip_file.name)
+
+    # Файлыг хуулж хадгалах
+    try:
+        shutil.copy2(file_path, target_path)
+    except Exception as e:
+        return HttpResponse(f"Failed to copy file: {e}", status=500)
+
+    # Таталтын мэдээллийг хадгалах
+    DownloadedDevice.objects.create(
+        zip_file=zip_file,
+        device_name=device_name,
+        os_info=os_info,
+        ip_address=client_ip,
+        success=True
+    )
+
+    # Татсан тоогоо нэмэгдүүлэх
     zip_file.download_count += 1
     zip_file.save()
 
+    # Файлыг хэрэглэгчид буцаах
     return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=zip_file.name)
 
 #tataj avsan tuhuurumjuudiin medeelliig haruulna
@@ -209,10 +223,6 @@ def downloaded_devices(request):
             output.getvalue(),
             content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-        file_path = r"C:\ebarimt\myfile.xlsx"
-
-        # Windows дээр тухайн файлыг нээх
-        subprocess.run(['explorer', file_path])
 
     # Upload / Download тоо
     upload_count = ZipFile.objects.filter(upload_date__date=parsed_date).count() if parsed_date else 0
