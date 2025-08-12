@@ -87,48 +87,46 @@ def zip_list(request):
 
 #hamgiin suuld upload hiisen file-iig tataj avah
 def download_latest_zip(request):
-    # Сүүлд татах боломжтой ZipFile-ийг авна
     zip_file = ZipFile.objects.filter(is_download=True).order_by('-upload_date').first()
     if not zip_file:
         return HttpResponse("No files available for download.", status=404)
 
-    # User Agent мэдээлэл задлах
+    # Extract user details
     user_agent = request.META.get('HTTP_USER_AGENT', '')
     parsed_ua = parse(user_agent)
     os_info = f"{parsed_ua.os.family} {parsed_ua.os.version_string} - {parsed_ua.device.family}"
 
-    # Клиент IP-г авах
     client_ip = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR', '')).split(',')[0].strip()
 
-    # IP-аас hostname хайх оролдлого
+    # Attempt to resolve hostname
     device_name = None
     if client_ip and client_ip != "127.0.0.1":
         try:
-            device_name = socket.gethostbyaddr(client_ip)[0]
+            device_name = socket.gethostbyaddr(client_ip)[0]  # Get hostname
         except (socket.herror, socket.gaierror, socket.timeout):
-            device_name = None
+            device_name = None  # If hostname resolution fails, fallback to frontend input
 
-    # Frontend-аас hostname ирсэн бол илүүд үзэх
+    # Get hostname from frontend if available
     hostname_from_frontend = request.POST.get("hostname", "").strip()
     if hostname_from_frontend:
-        device_name = hostname_from_frontend
+        device_name = hostname_from_frontend  # Prefer frontend hostname if provided
 
+    # Fallback to IP address if hostname is still unknown
     if not device_name:
         device_name = client_ip
 
-    # Хэрэглэгч өмнө амжилттай татсан эсэхийг шалгах
+    # Check if this file has already been downloaded successfully on this device
     already_downloaded = DownloadedDevice.objects.filter(
         zip_file__name=zip_file.name,
         zip_file__version=zip_file.version,
         ip_address=client_ip,
         device_name=device_name,
-        success=True
+        success=True  # Block only if it was previously successful
     ).exists()
 
     if already_downloaded:
         return HttpResponse("This file has already been downloaded successfully on this device.", status=403)
 
-    # Файлын замыг тодорхойлох
     file_path = os.path.join(settings.MEDIA_ROOT, str(zip_file.file))
     if not os.path.exists(file_path):
         return HttpResponse("File not found.", status=404)
@@ -137,27 +135,28 @@ def download_latest_zip(request):
     target_dir = r"C:\ebarimt"
     os.makedirs(target_dir, exist_ok=True)
     target_path = os.path.join(target_dir, zip_file.name)
-
     # Файлыг хуулж хадгалах
     try:
         shutil.copy2(file_path, target_path)
     except Exception as e:
         return HttpResponse(f"Failed to copy file: {e}", status=500)
 
-    # Таталтын мэдээллийг хадгалах
+    # Save the download record with hostname in device_name
     DownloadedDevice.objects.create(
         zip_file=zip_file,
-        device_name=device_name,
+        device_name=device_name,  # Save the hostname
         os_info=os_info,
         ip_address=client_ip,
         success=True
     )
 
-    # Татсан тоогоо нэмэгдүүлэх
+    # If the file does not exist, return an error
+    # if not success:
+    #     return HttpResponse("File not found.", status=404)
+
     zip_file.download_count += 1
     zip_file.save()
 
-    # Файлыг хэрэглэгчид буцаах
     return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=zip_file.name)
 
 #tataj avsan tuhuurumjuudiin medeelliig haruulna
